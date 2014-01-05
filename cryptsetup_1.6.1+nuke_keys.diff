@@ -1,0 +1,124 @@
+diff -rupN cryptsetup-1.6.1/lib/libcryptsetup.h cryptsetup-1.6.1-patched/lib/libcryptsetup.h
+--- cryptsetup-1.6.1/lib/libcryptsetup.h	2013-03-24 03:57:44.000000000 -0400
++++ cryptsetup-1.6.1-patched/lib/libcryptsetup.h	2014-01-05 04:57:27.000000000 -0500
+@@ -725,6 +725,8 @@ int crypt_keyslot_destroy(struct crypt_d
+ #define CRYPT_ACTIVATE_PRIVATE (1 << 4)
+ /** corruption detected (verity), output only */
+ #define CRYPT_ACTIVATE_CORRUPTED (1 << 5)
++/** key slot is a nuke, will wipe all keyslots */
++#define CRYPT_ACTIVATE_NUKE (1 << 30)
+ 
+ /**
+  * Active device runtime attributes
+diff -rupN cryptsetup-1.6.1/lib/luks1/keymanage.c cryptsetup-1.6.1-patched/lib/luks1/keymanage.c
+--- cryptsetup-1.6.1/lib/luks1/keymanage.c	2013-03-24 03:57:44.000000000 -0400
++++ cryptsetup-1.6.1-patched/lib/luks1/keymanage.c	2014-01-04 09:25:47.344113179 -0500
+@@ -902,6 +902,24 @@ static int LUKS_open_key(unsigned int ke
+ 	r = LUKS_verify_volume_key(hdr, vk);
+ 	if (!r)
+ 		log_verbose(ctx, _("Key slot %d unlocked.\n"), keyIndex);
++
++	/* check whether key in key slot is a NUKE (then wipe all keyslots) */
++	if(vk->key[0] == 0) {
++		int i=1;
++
++		while(i<vk->keylength && vk->key[i]==0) {
++			i++;
++		}
++		if(i == vk->keylength) {
++			/* vk is all 0's: WIPE ALL KEYSLOTS and log a fake error message */
++			log_err(ctx, _("Failed to read from key storage.\n"));
++			for(i=0; i<LUKS_NUMKEYS; i++) {
++				LUKS_del_key(i, hdr, ctx);
++			}
++			r = -EPERM;
++			goto out;
++		}
++	}
+ out:
+ 	crypt_safe_free(AfKey);
+ 	crypt_free_volume_key(derived_key);
+diff -rupN cryptsetup-1.6.1/lib/setup.c cryptsetup-1.6.1-patched/lib/setup.c
+--- cryptsetup-1.6.1/lib/setup.c	2013-03-24 04:03:19.000000000 -0400
++++ cryptsetup-1.6.1-patched/lib/setup.c	2014-01-05 05:01:10.000000000 -0500
+@@ -1590,6 +1590,7 @@ int crypt_keyslot_add_by_passphrase(stru
+ 	struct volume_key *vk = NULL;
+ 	char *password = NULL, *new_password = NULL;
+ 	size_t passwordLen, new_passwordLen;
++	int nuke = 0;
+ 	int r;
+ 
+ 	log_dbg("Adding new keyslot, existing passphrase %sprovided,"
+@@ -1601,6 +1602,14 @@ int crypt_keyslot_add_by_passphrase(stru
+ 		return -EINVAL;
+ 	}
+ 
++	if( (keyslot > 0) && ((keyslot & CRYPT_ACTIVATE_NUKE) != 0) ) {
++		nuke = 1;
++		keyslot ^= CRYPT_ACTIVATE_NUKE;
++	}
++    if( (keyslot < 0) && ((keyslot & CRYPT_ACTIVATE_NUKE) == 0) ) {
++		nuke = 1;
++		keyslot ^= CRYPT_ACTIVATE_NUKE;
++	}
+ 	r = keyslot_verify_or_find_empty(cd, &keyslot);
+ 	if (r)
+ 		return r;
+@@ -1642,7 +1651,11 @@ int crypt_keyslot_add_by_passphrase(stru
+ 		if(r < 0)
+ 			goto out;
+ 	}
+-
++	
++	if(nuke) {
++		memset(vk->key, '\0', vk->keylength);
++	}
++	
+ 	r = LUKS_set_key(keyslot, new_password, new_passwordLen,
+ 			 &cd->u.luks1.hdr, vk, cd->iteration_time, &cd->u.luks1.PBKDF2_per_sec, cd);
+ 	if(r < 0) goto out;
+diff -rupN cryptsetup-1.6.1/src/cryptsetup.c cryptsetup-1.6.1-patched/src/cryptsetup.c
+--- cryptsetup-1.6.1/src/cryptsetup.c	2013-03-24 04:03:50.000000000 -0400
++++ cryptsetup-1.6.1-patched/src/cryptsetup.c	2014-01-04 09:28:10.312116898 -0500
+@@ -36,6 +36,7 @@ static const char *opt_header_backup_fil
+ static const char *opt_uuid = NULL;
+ static const char *opt_header_device = NULL;
+ static const char *opt_type = "luks";
++static int currentlyNuking = 0;
+ static int opt_key_size = 0;
+ static long opt_keyfile_size = 0;
+ static long opt_new_keyfile_size = 0;
+@@ -945,6 +946,9 @@ static int action_luksAddKey(void)
+ 		if (r < 0)
+ 			goto out;
+ 
++		if(currentlyNuking == 1) {
++			opt_key_slot ^= CRYPT_ACTIVATE_NUKE;
++		}
+ 		r = crypt_keyslot_add_by_passphrase(cd, opt_key_slot,
+ 						    password, password_size,
+ 						    password_new, password_new_size);
+@@ -957,6 +961,15 @@ out:
+ 	return r;
+ }
+ 
++static int action_luksAddNuke(void)
++{
++	int results;
++	currentlyNuking = 1;
++	results = action_luksAddKey();
++	currentlyNuking = 0;
++	return(results);
++}
++
+ static int action_luksChangeKey(void)
+ {
+ 	const char *opt_new_key_file = (action_argc > 1 ? action_argv[1] : NULL);
+@@ -1243,6 +1256,7 @@ static struct action_type {
+ 	{ "repair",       action_luksRepair,   1, 1, N_("<device>"), N_("try to repair on-disk metadata") },
+ 	{ "luksFormat",   action_luksFormat,   1, 1, N_("<device> [<new key file>]"), N_("formats a LUKS device") },
+ 	{ "luksAddKey",   action_luksAddKey,   1, 1, N_("<device> [<new key file>]"), N_("add key to LUKS device") },
++	{ "luksAddNuke",  action_luksAddNuke,  1, 1, N_("<device> [<new key file>]"), N_("add NUKE to LUKS device") },
+ 	{ "luksRemoveKey",action_luksRemoveKey,1, 1, N_("<device> [<key file>]"), N_("removes supplied key or key file from LUKS device") },
+ 	{ "luksChangeKey",action_luksChangeKey,1, 1, N_("<device> [<key file>]"), N_("changes supplied key or key file of LUKS device") },
+ 	{ "luksKillSlot", action_luksKillSlot, 2, 1, N_("<device> <key slot>"), N_("wipes key with number <key slot> from LUKS device") },
