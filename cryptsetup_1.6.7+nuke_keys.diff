@@ -1,15 +1,15 @@
 diff -rupN cryptsetup-1.6.1/lib/libcryptsetup.h cryptsetup-1.6.1-patched/lib/libcryptsetup.h
---- cryptsetup-1.6.1/lib/libcryptsetup.h	2013-03-24 03:57:44.000000000 -0400
-+++ cryptsetup-1.6.1-patched/lib/libcryptsetup.h	2014-01-05 04:57:27.000000000 -0500
-@@ -725,6 +725,8 @@ int crypt_keyslot_destroy(struct crypt_d
- #define CRYPT_ACTIVATE_PRIVATE (1 << 4)
- /** corruption detected (verity), output only */
- #define CRYPT_ACTIVATE_CORRUPTED (1 << 5)
+--- cryptsetup-1.6.7/lib/libcryptsetup.h	2013-03-24 03:57:44.000000000 -0400
++++ cryptsetup-1.6.7-patched/lib/libcryptsetup.h	2014-01-05 04:57:27.000000000 -0500
+@@ -748,6 +748,8 @@
+ #define CRYPT_ACTIVATE_SAME_CPU_CRYPT (1 << 6)
+ /** use submit_from_crypt_cpus for dm-crypt */
+ #define CRYPT_ACTIVATE_SUBMIT_FROM_CRYPT_CPUS (1 << 7)
 +/** key slot is a nuke, will wipe all keyslots */
 +#define CRYPT_ACTIVATE_NUKE (1 << 30)
  
+ 
  /**
-  * Active device runtime attributes
 diff -rupN cryptsetup-1.6.1/lib/luks1/keymanage.c cryptsetup-1.6.1-patched/lib/luks1/keymanage.c
 --- cryptsetup-1.6.1/lib/luks1/keymanage.c	2013-03-24 03:57:44.000000000 -0400
 +++ cryptsetup-1.6.1-patched/lib/luks1/keymanage.c	2014-01-04 09:25:47.344113179 -0500
