@@ -13,13 +13,17 @@ else
 	success_msg="ALL TESTS PASSED!"
 fi
 
+break_to_shell() {
+	( cd $tmpdir && ${SHELL:-bash} -i; )
+}
+
 step() {
 	printf "$info_prefix %s...\n" "$*"
 }
 
 fail() {
 	printf "$fail_prefix %s!\n" "$*" >&2
-	[ -n "$BREAK" ] && ( cd $tmpdir && ${SHELL:-bash} -i; )
+	[ -n "$BREAK" ] && break_to_shell
 	exit 1
 }
 
