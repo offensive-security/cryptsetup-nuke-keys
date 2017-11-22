@@ -100,6 +100,7 @@ luksOpen_wrong() {
 luksOpen_nuke() {
 	step 'Opening with nuke passphrase'
 	! v cryptsetup luksOpen "$disk" "$devname" <<< "$nuke" \
+	  && ! test -e "$dm_target" \
 	  || fail 'luksOpen with nuke passphrase exited zero!?'
 }
 
